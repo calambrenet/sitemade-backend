@@ -1,0 +1,22 @@
+- tag_type: StringRegex
+  tag_name: TecnologyBackend
+  name: PHP
+  values:
+  - (?i)(wp)
+  - (?i)(wp rocket)
+  parents: []
+- tag_type: String
+  tag_name: TecnologyBackend
+  name: Apache
+  values:
+  - Apache
+  - apache
+  - mod_
+  - mod-
+  parents: []
+- tag_type: String
+  tag_name: TecnologyBackend
+  name: Nginx
+  values:
+  - nginx
+  parents: []

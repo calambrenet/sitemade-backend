@@ -1,0 +1,4 @@
+/target
+.undodir
+*.vim
+/.env

@@ -1,0 +1,77 @@
+- tag_type: String
+  tag_name: TecnologyFrontend
+  name: Jquery
+  values:
+  - jquery.min
+  - jquery.
+  - jquery-ui
+  - jquery-mobile
+  parents: []
+- tag_type: String
+  tag_name: TecnologyAnalytics
+  name: Google tag manager
+  values:
+  - foobar
+  - Google Tag Manager
+  - gtm.start
+  parents: []
+- tag_type: StringRegex
+  tag_name: TecnologyFrontend
+  name: React
+  values:
+  - (\/neutron\/)+(\w)+(.js)
+  - (data-react)
+  - (data-reactroot)
+  parents: []
+- tag_type: StringRegex
+  tag_name: TecnologyFrontend
+  name: Angular
+  values:
+  - (\/angular\/)
+  - (ng-version)
+  parents: []
+- tag_type: StringRegex
+  tag_name: TecnologyFrontend
+  name: Bootstrap
+  values:
+  - <style>\s+/\*!\s+\\* Bootstrap v(\d\.\d\.\d)
+  - <link[^>]* href=[^>]*?bootstrap(?:[^>]*?([0-9a-fA-F]{7,40}|[\\d]+(?:.[\d]+(?:.[\d]+)?)?)|)[^>-]*?
+  parents: []
+- tag_type: String
+  tag_name: CookieCompliance
+  name: OneTrust
+  values:
+  - cdn.cookielaw.org/
+  - Optanon
+  - otSDKStub.js
+  - cdn.cookielaw.org
+  parents: []
+- tag_type: String
+  tag_name: TecnologyBackend
+  name: Django
+  values:
+  - csrftoken
+  - django
+  - csrfmiddlewaretoken
+  parents: []
+- tag_type: String
+  tag_name: CloudNetworkServices
+  name: Cloudflare
+  values:
+  - https://cdn.
+  parents: []
+- tag_type: StringRegex
+  tag_name: TecnologyBackend
+  name: Woocommerce
+  values:
+  - woocommerce(?:\.min)?\.js(?:\?ver=([0-9.]+))
+  - woocommerce(?:\.min)?\.css(?:\?ver=([0-9.]+))
+  parents:
+  - tag_type: StringRegex
+    tag_name: TecnologyBackend
+    name: PHP
+    values:
+    - (?i)(wp)
+    - (?i)(wp rocket)
+    parents: []
+
