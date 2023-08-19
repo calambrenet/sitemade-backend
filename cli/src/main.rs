@@ -1,4 +1,4 @@
-use scrapper;
+
 use std::env;
 use dotenv::dotenv;
 
