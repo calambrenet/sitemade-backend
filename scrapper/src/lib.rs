@@ -137,7 +137,6 @@ impl Scrapper{
         let a_selector = scraper::Selector::parse("a").unwrap();
         let a_list = document.select(&a_selector);
         for a in a_list {
-            //si el enlace no es del mismo dominio lo guardamos en un listado
             let href = match a.value().attr("href") {
                 Some(href) => href,
                 None => continue,
@@ -145,8 +144,6 @@ impl Scrapper{
 
             let site_url = site_url.replace("https://", "").replace("http://", "").replace("www.", "").replace("/", "");
 
-            //si el enlace incluye el valor de site_url se ignora
-            //debe ser un enlace valido que empiece por http o https
             if href.contains(&site_url) || !href.starts_with("http") || !href.starts_with("https") {
                 continue;
             }
@@ -156,7 +153,6 @@ impl Scrapper{
             let re = Regex::new(r"(https?://)?(www\.)?([a-zA-Z0-9\-\.]+)").unwrap();
             let domain = re.captures(&href).unwrap().get(3).unwrap().as_str();
 
-            //Añadir dominio a la base de datos
             let domain_id = tokio::runtime::Runtime::new().unwrap().block_on(db::add_domain_to_database(domain.to_string()));
             let web_page = DatabaseWebpage::new(domain_id, href.to_string());
             tokio::runtime::Runtime::new().unwrap().block_on(db::add_webpage_to_database(web_page));
