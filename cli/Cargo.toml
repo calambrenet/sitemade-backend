@@ -8,3 +8,4 @@ edition = "2021"
 [dependencies]
 dotenv = "0.15.0"
 scrapper = { path = "../scrapper" }
+tokio = "1.32.0"

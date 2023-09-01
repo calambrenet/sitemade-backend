@@ -19,3 +19,5 @@ bson = { version = "2.0.0-beta.1", features = ["chrono-0_4"] }
 serde_yaml = "0.9.25"
 env_logger = "0.10.0"
 log = "0.4.20"
+futures-util = "0.3.28"
+serde_with = "3.3.0"

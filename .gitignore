@@ -2,3 +2,4 @@
 .undodir
 *.vim
 /.env
+.vimspector.json

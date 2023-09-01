@@ -1,15 +1,18 @@
 mod db;
 
+use cdns_rs::sync::request;
 use regex::Regex;
 use scraper::Html;
-use cdns_rs::sync::request;
-use serde::{Serialize, Deserialize};
+use serde::{Deserialize, Serialize};
 
-use db::{DatabaseDomain, DatabaseWebpage, DatabaseWebTechnology};
+use std::sync::Once;
+
+use db::{DatabaseDomain, DatabaseWebTechnology, DatabaseWebpage};
 
 #[macro_use]
 extern crate log;
 
+static INIT: Once = Once::new();
 
 const TAGTYPESTRING: &str = "String";
 const TAGTYPESTRINGREGEX: &str = "StringRegex";
@@ -23,25 +26,30 @@ struct Tags {
     parents: Vec<Tags>,
 }
 
-fn get_page_language(document: &Html,
-                     database_domain: &DatabaseDomain,
-                     database_webpage: &DatabaseWebpage) {
-
+async fn get_page_language(
+    document: &Html,
+    database_domain: &DatabaseDomain,
+    database_webpage: &DatabaseWebpage,
+) {
     info!("     Buscando el idioma de la pagina");
 
-    let mut active_lang: String  = "".to_string();
+    let mut active_lang: String = "".to_string();
 
     let meta_selector_list = [
         "meta[name=language]",
         "meta[property='og:locale']",
-        "meta[http-equiv='Content-Language']"
+        "meta[http-equiv='Content-Language']",
     ];
 
     for meta_selector in meta_selector_list.iter() {
         let meta_language = scraper::Selector::parse(meta_selector).unwrap();
         let metas = document.select(&meta_language);
         for meta in metas {
-            info!("         meta({}) = {:?}", meta_selector, meta.value().attr("content").unwrap());
+            info!(
+                "         meta({}) = {:?}",
+                meta_selector,
+                meta.value().attr("content").unwrap()
+            );
             active_lang = meta.value().attr("content").unwrap().to_string();
 
             break;
@@ -51,42 +59,69 @@ fn get_page_language(document: &Html,
     let html_selector = scraper::Selector::parse("html").unwrap();
     let html = document.select(&html_selector).next();
     if let Some(lang) = html {
-        info!("         html lang = {:?}", lang.value().attr("lang").unwrap());
+        if let Some(lang_html) = lang.value().attr("lang") {
+            info!("         html lang = {:?}", lang_html);
 
-        if active_lang != lang.value().attr("lang").unwrap().to_string() {
-            active_lang = lang.value().attr("lang").unwrap().to_string();
+            if active_lang != lang_html.to_string() {
+                active_lang = lang_html.to_string();
+            }
         }
     }
 
     if active_lang != "" {
-        tokio::runtime::Runtime::new().unwrap().block_on(db::update_database_webpage_language(active_lang, database_domain._id, database_webpage._id)).unwrap();
+        /*
+        tokio::runtime::Runtime::new()
+            .unwrap()
+            .block_on(db::update_database_webpage_language(
+                active_lang,
+                database_domain._id,
+                database_webpage._id,
+            ))
+            .unwrap();
+            */
+        db::update_database_webpage_language(
+                active_lang,
+                database_domain._id,
+                database_webpage._id,
+            ).await.unwrap();
     }
 }
 
-
-fn get_pagerank(site_url: &str) -> f64 {
-    let url = format!("https://openpagerank.com/api/v1.0/getPageRank?domains[]={}", site_url);
-    let client = reqwest::blocking::Client::new();
-    let response = client.get(url.as_str())
+async fn get_pagerank(site_url: &str) -> f64 {
+    let url = format!(
+        "https://openpagerank.com/api/v1.0/getPageRank?domains[]={}",
+        site_url
+    );
+    let client = reqwest::Client::new();
+    let response = client
+        .get(url.as_str())
         .header("API-OPR", "4cccg4w8ck0gg08csgcsc4o8c4wso4s4swk8oowo")
-        .send();
+        .send().await;
 
     match response {
         Ok(response) => {
-            let response_txt = response.text().unwrap();
-            let response_json = serde_json::from_str::<serde_json::Value>(response_txt.as_str()).unwrap();
+            let response_txt = response.text().await.unwrap();
+            let response_json =
+                serde_json::from_str::<serde_json::Value>(response_txt.as_str()).unwrap();
             if response_json["status_code"] == 200 {
-                info!("     Pagerank = {:?}", response_json["response"][0]["page_rank_decimal"]);
+                info!(
+                    "     Pagerank = {:?}",
+                    response_json["response"][0]["page_rank_decimal"]
+                );
                 info!("     Rank = {:?}", response_json["response"][0]["rank"]);
 
-
-                response_json["response"][0]["page_rank_decimal"].as_f64().unwrap()
+                response_json["response"][0]["page_rank_decimal"]
+                    .as_f64()
+                    .unwrap()
             } else {
-                warn!("      Error al obtener el pagerank: {:?}", response_json["status_msg"]);
+                warn!(
+                    "      Error al obtener el pagerank: {:?}",
+                    response_json["status_msg"]
+                );
 
                 0.00
             }
-        },
+        }
         Err(e) => {
             warn!("     Error al obtener el pagerank: {:?}", e);
 
@@ -95,18 +130,19 @@ fn get_pagerank(site_url: &str) -> f64 {
     }
 }
 
-fn get_country_region_from_ip(ip: Vec<std::net::IpAddr>) {
+async fn get_country_region_from_ip(ip: Vec<std::net::IpAddr>) {
     let url = format!("https://ipapi.co/{}/json/", ip[0]);
 
     info!("     url = {}", url);
     info!("     Obtener el pais y region de la ip {}", ip[0]);
 
-    let client = reqwest::blocking::Client::new();
-    let response = client.get(url.as_str()).send();
+    let client = reqwest::Client::new();
+    let response = client.get(url.as_str()).send().await;
     match response {
         Ok(response) => {
-            let response_txt = response.text().unwrap();
-            let response_json = serde_json::from_str::<serde_json::Value>(response_txt.as_str()).unwrap();
+            let response_txt = response.text().await.unwrap();
+            let response_json =
+                serde_json::from_str::<serde_json::Value>(response_txt.as_str()).unwrap();
 
             if response_json["error"] != true {
                 info!("         Country = {:?}", response_json["country_name"]);
@@ -114,7 +150,7 @@ fn get_country_region_from_ip(ip: Vec<std::net::IpAddr>) {
             } else {
                 warn!("         response_json = {:?}", response_json);
             }
-        },
+        }
         Err(e) => {
             warn!("         Error al obtener el pais y region: {:?}", e);
         }
@@ -126,14 +162,12 @@ pub struct Scrapper {
     site_domain: String,
 }
 
-
-impl Scrapper{
-
+impl Scrapper {
     /*
      * Obtiene las urls de sitios externos que puedan existir en el html
      *
      */
-    fn get_external_urls(&mut self, document: &Html, site_url: &str) {
+    async fn get_external_urls(&mut self, document: &Html, site_url: &str) {
         let a_selector = scraper::Selector::parse("a").unwrap();
         let a_list = document.select(&a_selector);
         for a in a_list {
@@ -142,9 +176,38 @@ impl Scrapper{
                 None => continue,
             };
 
-            let site_url = site_url.replace("https://", "").replace("http://", "").replace("www.", "").replace("/", "");
+            let site_url = site_url
+                .replace("https://", "")
+                .replace("http://", "")
+                .replace("www.", "")
+                .replace("/", "");
 
-            if href.contains(&site_url) || !href.starts_with("http") || !href.starts_with("https") {
+            let banned_list = [
+                "facebook.com",
+                "twitter.com",
+                "instagram.com",
+                "www.youtube.com",
+                "linkedin.com",
+                "pinterest.com",
+                "tumblr.com",
+                "reddit.com",
+                "www.snapchat.com",
+                "www.whatsapp.com",
+                "www.messenger.com",
+                "www.quora.com",
+                "www.vk.com",
+                "www.flickr.com",
+                "www.meetup.com",
+                "apple.com",
+                "tiktok.com",
+                "google.com"
+            ];
+
+            if href.contains(&site_url) || !href.starts_with("http") 
+                || !href.starts_with("https") {
+                continue;
+            }
+            if banned_list.iter().any(|banned| href.contains(banned)) {
                 continue;
             }
 
@@ -153,14 +216,30 @@ impl Scrapper{
             let re = Regex::new(r"(https?://)?(www\.)?([a-zA-Z0-9\-\.]+)").unwrap();
             let domain = re.captures(&href).unwrap().get(3).unwrap().as_str();
 
-            let domain_id = tokio::runtime::Runtime::new().unwrap().block_on(db::add_domain_to_database(domain.to_string()));
-            let web_page = DatabaseWebpage::new(domain_id, href.to_string());
-            tokio::runtime::Runtime::new().unwrap().block_on(db::add_webpage_to_database(web_page));
+            let domain_id = db::add_domain_to_database(domain.to_string()).await;
+            if domain_id != None {
+                let database_domain = db::get_database_domain(domain).await;
+
+                //Si hay menos de 2 webpages de este dominio lo añadimos a la base de datos
+                //para que se pueda scrapear
+                let webpages_count = db::get_webpages_count_from_domain(domain_id.unwrap()).await;
+                if webpages_count < 2 { //FIXME: Usar constante
+                    let web_page = DatabaseWebpage::new(domain_id.unwrap(), href.to_string(), database_domain.pagerank);
+                    db::add_webpage_to_database(web_page).await;
+                } else {
+                    //info!("     Ya hay {} paginas de este dominio", webpages_count);
+                }
+            }
         }
     }
 
-
-    fn search_tags_in_html(&mut self, response: String, tags_list: Vec<Tags>, _database_domain: &DatabaseDomain, database_webpage: &DatabaseWebpage) {
+    async fn search_tags_in_html(
+        &mut self,
+        response: String,
+        tags_list: Vec<Tags>,
+        _database_domain: &DatabaseDomain,
+        database_webpage: &DatabaseWebpage,
+    ) {
         info!("     Buscando tags en el html");
 
         let mut database_web_technologies = vec![];
@@ -171,16 +250,21 @@ impl Scrapper{
             if tag.tag_type == TAGTYPESTRING.to_string() {
                 tag.values.iter().for_each(|value| {
                     if response.contains(value) {
-                        info!("         Encontrado tecnología {:?} {:?}", tag.tag_name, tag.name);
+                        info!(
+                            "         Encontrado tecnología {:?} {:?}",
+                            tag.tag_name, tag.name
+                        );
                         info!("          Parents: {:?}", tag.parents);
 
-                        if !database_web_technologies.iter().any(|web_technology: &DatabaseWebTechnology| web_technology.name == tag.name) {
-                            database_web_technologies.push(
-                                DatabaseWebTechnology {
-                                    ttype: tag.tag_name.clone(),
-                                    name: tag.name.clone(),
-                                }
-                            );
+                        if !database_web_technologies.iter().any(
+                            |web_technology: &DatabaseWebTechnology| {
+                                web_technology.name == tag.name
+                            },
+                        ) {
+                            database_web_technologies.push(DatabaseWebTechnology {
+                                ttype: tag.tag_name.clone(),
+                                name: tag.name.clone(),
+                            });
                         }
                     } else {
                         //println!("{}: not found", tag.name);
@@ -192,16 +276,21 @@ impl Scrapper{
 
                     //check if regex match
                     if regex.is_match(&response) {
-                        info!("         Encontrado tecnología {:?} {:?}", tag.tag_name, tag.name);
+                        info!(
+                            "         Encontrado tecnología {:?} {:?}",
+                            tag.tag_name, tag.name
+                        );
                         info!("          Parents: {:?}", tag.parents);
 
-                        if !database_web_technologies.iter().any(|web_technology: &DatabaseWebTechnology| web_technology.name == tag.name) {
-                            database_web_technologies.push(
-                                DatabaseWebTechnology {
-                                    ttype: tag.tag_name.clone(),
-                                    name: tag.name.clone(),
-                                }
-                            );
+                        if !database_web_technologies.iter().any(
+                            |web_technology: &DatabaseWebTechnology| {
+                                web_technology.name == tag.name
+                            },
+                        ) {
+                            database_web_technologies.push(DatabaseWebTechnology {
+                                ttype: tag.tag_name.clone(),
+                                name: tag.name.clone(),
+                            });
                         }
                     } else {
                         //println!("{}: ({:?}) not found", tag.name, value);
@@ -213,12 +302,19 @@ impl Scrapper{
         });
 
         //info!("         database_web_technologies = {:?}", database_web_technologies);
-
-        tokio::runtime::Runtime::new().unwrap().block_on(db::update_database_web_technologies(&database_web_technologies, database_webpage._id)).unwrap();
+        db::update_database_web_technologies(
+                &database_web_technologies,
+                database_webpage._id,
+            ).await.unwrap();
     }
 
-
-    fn search_tags_in_headers(&mut self, headers: reqwest::header::HeaderMap, tags_list: Vec<Tags>, _database_domain: &DatabaseDomain, database_webpage: &DatabaseWebpage) {
+    async fn search_tags_in_headers(
+        &mut self,
+        headers: reqwest::header::HeaderMap,
+        tags_list: Vec<Tags>,
+        _database_domain: &DatabaseDomain,
+        database_webpage: &DatabaseWebpage,
+    ) {
         info!("     Buscando tags en los headers");
         let mut database_web_headers = vec![];
 
@@ -227,15 +323,20 @@ impl Scrapper{
                 tag.values.iter().for_each(|value| {
                     headers.iter().for_each(|(_header_key, header_value)| {
                         if header_value.to_str().unwrap().contains(value) {
-                            info!("         Encontrado tecnología {:?} {:?}", tag.tag_name, tag.name);
+                            info!(
+                                "         Encontrado tecnología {:?} {:?}",
+                                tag.tag_name, tag.name
+                            );
 
-                            if !database_web_headers.iter().any(|web_technology: &DatabaseWebTechnology| web_technology.name == tag.name) {
-                                database_web_headers.push(
-                                    DatabaseWebTechnology {
-                                        ttype: tag.tag_name.clone(),
-                                        name: tag.name.clone(),
-                                    }
-                                );
+                            if !database_web_headers.iter().any(
+                                |web_technology: &DatabaseWebTechnology| {
+                                    web_technology.name == tag.name
+                                },
+                            ) {
+                                database_web_headers.push(DatabaseWebTechnology {
+                                    ttype: tag.tag_name.clone(),
+                                    name: tag.name.clone(),
+                                });
                             }
                         } else {
                             //println!("{}: ({:?}) not found", tag.name, value);
@@ -248,15 +349,20 @@ impl Scrapper{
 
                     headers.iter().for_each(|(_key, value)| {
                         if regex.is_match(&value.to_str().unwrap()) {
-                            info!("         Encontrado tecnología {:?} {:?}", tag.tag_name, tag.name);
+                            info!(
+                                "         Encontrado tecnología {:?} {:?}",
+                                tag.tag_name, tag.name
+                            );
 
-                            if !database_web_headers.iter().any(|web_technology: &DatabaseWebTechnology| web_technology.name == tag.name) {
-                                database_web_headers.push(
-                                    DatabaseWebTechnology {
-                                        ttype: tag.tag_name.clone(),
-                                        name: tag.name.clone(),
-                                    }
-                                );
+                            if !database_web_headers.iter().any(
+                                |web_technology: &DatabaseWebTechnology| {
+                                    web_technology.name == tag.name
+                                },
+                            ) {
+                                database_web_headers.push(DatabaseWebTechnology {
+                                    ttype: tag.tag_name.clone(),
+                                    name: tag.name.clone(),
+                                });
                             }
                         } else {
                             //println!("{}: ({:?}) not found", tag.name, value);
@@ -268,7 +374,10 @@ impl Scrapper{
             }
         });
 
-        tokio::runtime::Runtime::new().unwrap().block_on(db::update_database_web_headers(&database_web_headers, database_webpage._id)).unwrap();
+        db::update_database_web_headers(
+                &database_web_headers,
+                database_webpage._id,
+            ).await.unwrap();
     }
 
     pub fn new() -> Self {
@@ -278,28 +387,72 @@ impl Scrapper{
         }
     }
 
-    pub fn scrap_site(&mut self, site_url: String) {
-        env_logger::init();
+    fn init_logger(&mut self) {
+        INIT.call_once(env_logger::init);
+    }
+
+    pub fn scrap_all(&mut self) {
+        self.init_logger();
+
+        info!("Scrapping all...");
+
+        loop {
+            std::thread::sleep(std::time::Duration::from_secs(5));
+
+            let database_webpage = tokio::runtime::Runtime::new()
+                .unwrap()
+                .block_on(db::get_database_webpage_to_scrap());
+
+
+            if database_webpage.is_none() {
+                info!("No hay paginas para scrapear");
+
+                return ();
+            }
+
+            let database_webpage = database_webpage.unwrap();
+
+            //println!("database_webpage = {:?}", database_webpage);
+
+            //si database_webpage.updated_at es menor a 10 dias ignorar
+            /*
+            let now = chrono::Utc::now();
+            let duration = now.signed_duration_since(database_webpage.scrapped_at);
+            let days = duration.num_days();
+            if days < 10 {
+                info!("La pagina {} fue scrappeada hace {} dias, ignorar", database_webpage.url, days);
+
+                continue;
+            }*/
+
+            tokio::runtime::Runtime::new()
+                .unwrap()
+                .block_on(self.scrap_site(database_webpage.url))
+                .unwrap();
+        }
+    }
+
+    pub async fn scrap_site(&mut self, site_url: String) -> Result<(), reqwest::Error> {
+        self.init_logger();
 
         info!("Scrapping... {}", site_url);
 
-        let response = match reqwest::blocking::get(site_url.as_str()) {
-            Ok(response) => response,
-            Err(e) => {
-                error!("Error al obtener la pagina: {:?}", e);
-                
-                return;
-            }
-        };
+        let response        = reqwest::get(site_url.as_str()).await?;
+        let headers         = response.headers().clone();
+        let response_txt    = response.text().await?.clone();
 
         self.site_url = site_url.clone();
 
-        let re = Regex::new(r"(https?://)?(www\.)?([a-zA-Z0-9\-\.]+)").unwrap();
-        let domain = re.captures(&site_url).unwrap().get(3).unwrap().as_str();
+        let re      = Regex::new(r"(https?://)?(www\.)?([a-zA-Z0-9\-\.]+)").unwrap();
+        let domain  = re.captures(&site_url).unwrap().get(3).unwrap().as_str();
         info!(" Domain = {}", domain);
 
-        let database_domain = tokio::runtime::Runtime::new().unwrap().block_on(db::get_database_domain(domain));
-        let database_webpage = tokio::runtime::Runtime::new().unwrap().block_on(db::set_database_webpage(site_url.clone(), database_domain._id));
+        let database_domain = db::get_database_domain(domain).await;
+
+        let database_webpage = db::set_database_webpage(
+            site_url.clone(),
+            database_domain._id
+        ).await;
 
         info!(" domain_id = {:?}", database_domain._id);
 
@@ -307,9 +460,8 @@ impl Scrapper{
 
         if database_domain.pagerank.is_none() {
             info!("Obtener el pagerank del sitio {}", domain);
-            let pr = get_pagerank(domain);
-
-            tokio::runtime::Runtime::new().unwrap().block_on(db::update_database_domain_pagerank(database_domain._id, pr));
+            let pr = get_pagerank(domain).await;
+            db::update_database_domain_pagerank(database_domain._id, pr).await;
 
             info!(" Pagerank = {:?}", pr);
         } else {
@@ -319,18 +471,21 @@ impl Scrapper{
 
         let res_a = request::resolve_fqdn(domain, None);
         let ip = match res_a {
-            Ok(res_a) => res_a,
+            Ok(ip) => ip,
             Err(e) => {
-                error!("Error al obtener la ip del sitio: {:?}", e);
-                
-                return;
+                error!("Error al obtener la ip: {:?}", e);
+
+                return Ok(());
             }
         };
 
         info!(" IP = {:?}", ip);
-        get_country_region_from_ip(ip.clone());
+        get_country_region_from_ip(ip.clone()).await;
 
-        tokio::runtime::Runtime::new().unwrap().block_on(db::update_database_domain_ip(database_domain._id, ip[0].to_string()));
+        db::update_database_domain_ip(
+                database_domain._id,
+                ip[0].to_string(),
+        ).await;
 
         //Listado de Tags
         let file = std::fs::File::open("body_tags.yaml").unwrap();
@@ -339,23 +494,32 @@ impl Scrapper{
         let file = std::fs::File::open("headers_tags.yaml").unwrap();
         let headers_tags_list: Vec<Tags> = serde_yaml::from_reader(file).unwrap();
 
-        let headers = response.headers().clone();
-        let response_txt = response.text().unwrap();
-
+        
         //println!("headers = {:?}", headers);
-        self.search_tags_in_html(response_txt.clone(), body_tags_list.clone(), &database_domain, &database_webpage);
-        self.search_tags_in_headers(headers, headers_tags_list.clone(), &database_domain, &database_webpage);
+        self.search_tags_in_html(
+            response_txt.clone(),
+            body_tags_list.clone(),
+            &database_domain,
+            &database_webpage,
+        ).await;
+        self.search_tags_in_headers(
+            headers,
+            headers_tags_list.clone(),
+            &database_domain,
+            &database_webpage,
+        ).await;
 
         //Ahora analizar el html
         let document = scraper::Html::parse_document(&response_txt);
 
         //buscamos el idioma de la pagina
-        get_page_language(&document, &database_domain, &database_webpage);
+        get_page_language(&document, &database_domain, &database_webpage).await;
 
         //Obtener urls de sitios externos
-        self.get_external_urls(&document, domain);
+        self.get_external_urls(&document, domain).await;
 
         info!("Scraping finished!");
+        
+        Ok(())
     }
 }
-
