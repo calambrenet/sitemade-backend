@@ -27,6 +27,7 @@ struct Tags {
 }
 
 async fn get_page_language(
+    db_client: mongodb::Client,
     document: &Html,
     database_domain: &DatabaseDomain,
     database_webpage: &DatabaseWebpage,
@@ -80,6 +81,7 @@ async fn get_page_language(
             .unwrap();
             */
         db::update_database_webpage_language(
+                db_client,
                 active_lang,
                 database_domain._id,
                 database_webpage._id,
@@ -167,7 +169,7 @@ impl Scrapper {
      * Obtiene las urls de sitios externos que puedan existir en el html
      *
      */
-    async fn get_external_urls(&mut self, document: &Html, site_url: &str) {
+    async fn get_external_urls(&mut self, db_client: mongodb::Client, document: &Html, site_url: &str) {
         let a_selector = scraper::Selector::parse("a").unwrap();
         let a_list = document.select(&a_selector);
         for a in a_list {
@@ -200,7 +202,9 @@ impl Scrapper {
                 "www.meetup.com",
                 "apple.com",
                 "tiktok.com",
-                "google.com"
+                "google.com",
+                "spotify.com",
+                "bit.ly",
             ];
 
             if href.contains(&site_url) || !href.starts_with("http") 
@@ -211,21 +215,21 @@ impl Scrapper {
                 continue;
             }
 
-            info!("     Enlace externo: {:?}", href);
-
             let re = Regex::new(r"(https?://)?(www\.)?([a-zA-Z0-9\-\.]+)").unwrap();
             let domain = re.captures(&href).unwrap().get(3).unwrap().as_str();
 
-            let domain_id = db::add_domain_to_database(domain.to_string()).await;
+            let domain_id = db::add_domain_to_database(db_client.clone(), domain.to_string()).await;
             if domain_id != None {
-                let database_domain = db::get_database_domain(domain).await;
+                let database_domain = db::get_database_domain(db_client.clone(), domain).await;
 
                 //Si hay menos de 2 webpages de este dominio lo añadimos a la base de datos
                 //para que se pueda scrapear
-                let webpages_count = db::get_webpages_count_from_domain(domain_id.unwrap()).await;
+                let webpages_count = db::get_webpages_count_from_domain(db_client.clone(), domain_id.unwrap()).await;
                 if webpages_count < 2 { //FIXME: Usar constante
+                    info!("     Enlace externo: {:?}", href);
+
                     let web_page = DatabaseWebpage::new(domain_id.unwrap(), href.to_string(), database_domain.pagerank);
-                    db::add_webpage_to_database(web_page).await;
+                    db::add_webpage_to_database(db_client.clone(), web_page).await;
                 } else {
                     //info!("     Ya hay {} paginas de este dominio", webpages_count);
                 }
@@ -235,6 +239,7 @@ impl Scrapper {
 
     async fn search_tags_in_html(
         &mut self,
+        db_client: mongodb::Client,
         response: String,
         tags_list: Vec<Tags>,
         _database_domain: &DatabaseDomain,
@@ -303,6 +308,7 @@ impl Scrapper {
 
         //info!("         database_web_technologies = {:?}", database_web_technologies);
         db::update_database_web_technologies(
+                db_client.clone(),
                 &database_web_technologies,
                 database_webpage._id,
             ).await.unwrap();
@@ -310,6 +316,7 @@ impl Scrapper {
 
     async fn search_tags_in_headers(
         &mut self,
+        db_client: mongodb::Client,
         headers: reqwest::header::HeaderMap,
         tags_list: Vec<Tags>,
         _database_domain: &DatabaseDomain,
@@ -375,6 +382,7 @@ impl Scrapper {
         });
 
         db::update_database_web_headers(
+                db_client.clone(),
                 &database_web_headers,
                 database_webpage._id,
             ).await.unwrap();
@@ -391,17 +399,16 @@ impl Scrapper {
         INIT.call_once(env_logger::init);
     }
 
-    pub fn scrap_all(&mut self) {
+    pub async fn scrap_all(&mut self) {
         self.init_logger();
 
         info!("Scrapping all...");
+        let dbclient = db::get_mongodb().await.unwrap();
 
         loop {
             std::thread::sleep(std::time::Duration::from_secs(5));
 
-            let database_webpage = tokio::runtime::Runtime::new()
-                .unwrap()
-                .block_on(db::get_database_webpage_to_scrap());
+            let database_webpage = db::get_database_webpage_to_scrap(dbclient.clone()).await;
 
 
             if database_webpage.is_none() {
@@ -425,14 +432,30 @@ impl Scrapper {
                 continue;
             }*/
 
-            tokio::runtime::Runtime::new()
-                .unwrap()
-                .block_on(self.scrap_site(database_webpage.url))
-                .unwrap();
+            match self.scrap_site(database_webpage.url.clone(), Some(dbclient.clone())).await {
+                Ok(_) => {
+                    info!("Pagina {} scrapeada correctamente", database_webpage.url);
+                }
+                Err(e) => {
+                    error!("Error al scrapear la pagina {}: {:?}", database_webpage.url, e);
+
+                    db::update_database_webpages_set_scrappeable(
+                        dbclient.clone(),
+                        database_webpage._id,
+                        false,
+                    ).await.unwrap();
+                }
+            }
         }
     }
 
-    pub async fn scrap_site(&mut self, site_url: String) -> Result<(), reqwest::Error> {
+    pub async fn scrap_site(&mut self, site_url: String, dbclient: Option<mongodb::Client>) -> Result<(), reqwest::Error> {
+        let db_client;
+        if dbclient.is_none() {
+            db_client = db::get_mongodb().await.unwrap();
+        } else {
+            db_client = dbclient.unwrap();
+        }
         self.init_logger();
 
         info!("Scrapping... {}", site_url);
@@ -447,9 +470,9 @@ impl Scrapper {
         let domain  = re.captures(&site_url).unwrap().get(3).unwrap().as_str();
         info!(" Domain = {}", domain);
 
-        let database_domain = db::get_database_domain(domain).await;
-
+        let database_domain = db::get_database_domain(db_client.clone(), domain).await;
         let database_webpage = db::set_database_webpage(
+            db_client.clone(),
             site_url.clone(),
             database_domain._id
         ).await;
@@ -461,12 +484,12 @@ impl Scrapper {
         if database_domain.pagerank.is_none() {
             info!("Obtener el pagerank del sitio {}", domain);
             let pr = get_pagerank(domain).await;
-            db::update_database_domain_pagerank(database_domain._id, pr).await;
+            db::update_database_domain_pagerank(db_client.clone(), database_domain._id, pr).await;
 
             info!(" Pagerank = {:?}", pr);
         } else {
             let pr = database_domain.pagerank.unwrap();
-            info!(" Pagerank = {:?}", pr);
+            info!(" Pagerank = {:?}", pr)
         }
 
         let res_a = request::resolve_fqdn(domain, None);
@@ -480,12 +503,15 @@ impl Scrapper {
         };
 
         info!(" IP = {:?}", ip);
-        get_country_region_from_ip(ip.clone()).await;
+        if ip.len() > 0 {
+            get_country_region_from_ip(ip.clone()).await;
 
-        db::update_database_domain_ip(
-                database_domain._id,
-                ip[0].to_string(),
-        ).await;
+            db::update_database_domain_ip(
+                    db_client.clone(),
+                    database_domain._id,
+                    ip[0].to_string(),
+            ).await;
+        }
 
         //Listado de Tags
         let file = std::fs::File::open("body_tags.yaml").unwrap();
@@ -497,12 +523,14 @@ impl Scrapper {
         
         //println!("headers = {:?}", headers);
         self.search_tags_in_html(
+            db_client.clone(),
             response_txt.clone(),
             body_tags_list.clone(),
             &database_domain,
             &database_webpage,
         ).await;
         self.search_tags_in_headers(
+            db_client.clone(),
             headers,
             headers_tags_list.clone(),
             &database_domain,
@@ -513,10 +541,10 @@ impl Scrapper {
         let document = scraper::Html::parse_document(&response_txt);
 
         //buscamos el idioma de la pagina
-        get_page_language(&document, &database_domain, &database_webpage).await;
+        get_page_language(db_client.clone(), &document, &database_domain, &database_webpage).await;
 
         //Obtener urls de sitios externos
-        self.get_external_urls(&document, domain).await;
+        self.get_external_urls(db_client.clone(), &document, domain).await;
 
         info!("Scraping finished!");
         

@@ -66,7 +66,7 @@ pub struct DatabaseWebTechnology {
     pub name: String,
 }
 
-async fn get_mongodb() -> Result<mongodb::Client, mongodb::error::Error> {
+pub async fn get_mongodb() -> Result<mongodb::Client, mongodb::error::Error> {
     let client_uri =
         env::var("MONGODB_URI").expect("You must set the MONGODB_URI environment var!");
 
@@ -79,9 +79,7 @@ async fn get_mongodb() -> Result<mongodb::Client, mongodb::error::Error> {
     return Ok(db_client.unwrap());
 }
 
-pub async fn get_database_domain(domain: &str) -> DatabaseDomain {
-    let db_client = get_mongodb().await.unwrap();
-
+pub async fn get_database_domain(db_client: mongodb::Client, domain: &str) -> DatabaseDomain {
     let domains_collection: mongodb::Collection<DatabaseDomain> =
         db_client.database("sitemade").collection("domains");
     let domain_doc = mongodb::bson::doc! { "host": domain };
@@ -111,9 +109,7 @@ pub async fn get_database_domain(domain: &str) -> DatabaseDomain {
     domain
 }
 
-pub async fn update_database_domain_pagerank(domain_id: mongodb::bson::oid::ObjectId, pr: f64) {
-    let db_client = get_mongodb().await.unwrap();
-
+pub async fn update_database_domain_pagerank(db_client: mongodb::Client, domain_id: mongodb::bson::oid::ObjectId, pr: f64) {
     let domains_collection: mongodb::Collection<DatabaseDomain> =
         db_client.database("sitemade").collection("domains");
     let domain_doc = mongodb::bson::doc! { "_id": domain_id };
@@ -166,9 +162,7 @@ pub async fn update_database_domain_pagerank(domain_id: mongodb::bson::oid::Obje
     }
 }
 
-pub async fn update_database_domain_ip(domain_id: mongodb::bson::oid::ObjectId, ip: String) {
-    let db_client = get_mongodb().await.unwrap();
-
+pub async fn update_database_domain_ip(db_client: mongodb::Client, domain_id: mongodb::bson::oid::ObjectId, ip: String) {
     let domains_collection: mongodb::Collection<DatabaseDomain> =
         db_client.database("sitemade").collection("domains");
     let domain_doc = mongodb::bson::doc! { "_id": domain_id };
@@ -191,9 +185,7 @@ pub async fn update_database_domain_ip(domain_id: mongodb::bson::oid::ObjectId, 
     };
 }
 
-pub async fn add_domain_to_database(domain: String) -> Option<mongodb::bson::oid::ObjectId> {
-    let db_client = get_mongodb().await.unwrap();
-
+pub async fn add_domain_to_database(db_client: mongodb::Client, domain: String) -> Option<mongodb::bson::oid::ObjectId> {
     let domains_collection: mongodb::Collection<DatabaseDomain> =
         db_client.database("sitemade").collection("domains");
     let domain_doc = mongodb::bson::doc! { "host": domain.clone() };
@@ -223,9 +215,7 @@ pub async fn add_domain_to_database(domain: String) -> Option<mongodb::bson::oid
     Some(domain_id)
 }
 
-pub async fn add_webpage_to_database(webpage: DatabaseWebpage) {
-    let db_client = get_mongodb().await.unwrap();
-
+pub async fn add_webpage_to_database(db_client: mongodb::Client, webpage: DatabaseWebpage) {
     let webpages_collection: mongodb::Collection<DatabaseWebpage> =
         db_client.database("sitemade").collection("webpages");
     let webpage_doc = mongodb::bson::doc! { "url": webpage.url.clone() };
@@ -247,11 +237,10 @@ pub async fn add_webpage_to_database(webpage: DatabaseWebpage) {
 }
 
 pub async fn set_database_webpage(
+    db_client: mongodb::Client,
     webpage_url: String,
     domain_id: mongodb::bson::oid::ObjectId,
 ) -> DatabaseWebpage {
-    let db_client = get_mongodb().await.unwrap();
-
     let webpages_collection: mongodb::Collection<DatabaseWebpage> =
         db_client.database("sitemade").collection("webpages");
     let webpage_doc = mongodb::bson::doc! { "url": webpage_url.clone() };
@@ -277,11 +266,10 @@ pub async fn set_database_webpage(
 }
 
 pub async fn update_database_web_technologies(
+    db_client: mongodb::Client,
     dataabase_web_technologies: &Vec<DatabaseWebTechnology>,
     website_id: mongodb::bson::oid::ObjectId,
 ) -> Result<(), mongodb::error::Error> {
-    let db_client = get_mongodb().await.unwrap();
-
     let webpages_collection: mongodb::Collection<DatabaseWebpage> =
         db_client.database("sitemade").collection("webpages");
     let webpage_doc = mongodb::bson::doc! { "_id": website_id };
@@ -314,11 +302,10 @@ pub async fn update_database_web_technologies(
 }
 
 pub async fn update_database_web_headers(
+    db_client: mongodb::Client,
     database_web_headers: &Vec<DatabaseWebTechnology>,
     website_id: mongodb::bson::oid::ObjectId,
 ) -> Result<(), mongodb::error::Error> {
-    let db_client = get_mongodb().await.unwrap();
-
     let webpages_collection: mongodb::Collection<DatabaseWebpage> =
         db_client.database("sitemade").collection("webpages");
     let webpage_doc = mongodb::bson::doc! { "_id": website_id };
@@ -350,12 +337,11 @@ pub async fn update_database_web_headers(
 }
 
 pub async fn update_database_webpage_language(
+    db_client: mongodb::Client,
     language: String,
     domain_id: mongodb::bson::oid::ObjectId,
     website_id: mongodb::bson::oid::ObjectId,
 ) -> Result<(), mongodb::error::Error> {
-    let db_client = get_mongodb().await.unwrap();
-
     let webpages_collection: mongodb::Collection<DatabaseWebpage> =
         db_client.database("sitemade").collection("webpages");
     let webpage_doc = mongodb::bson::doc! { "_id": website_id };
@@ -417,10 +403,46 @@ pub async fn update_database_webpage_language(
     Ok(())
 }
 
-pub async fn get_database_webpage_to_scrap() -> Option<DatabaseWebpage> {
-    let db_client = get_mongodb().await.unwrap();
+pub async fn update_database_webpages_set_scrappeable(
+    db_client: mongodb::Client,
+    website_id: mongodb::bson::oid::ObjectId,
+    scrappeable: bool,
+) -> Result<(), mongodb::error::Error> {
+    let webpages_collection: mongodb::Collection<DatabaseWebpage> =
+        db_client.database("sitemade").collection("webpages");
+    let webpage_doc = mongodb::bson::doc! { "_id": website_id };
 
+    let mut webpage_result = webpages_collection
+        .find(webpage_doc, None)
+        .await
+        .unwrap();
 
+    while let Some(webpage) = webpage_result.next().await {
+        match webpage {
+            Ok(mut webpage_doc) => {
+                webpage_doc.scrappeable = scrappeable;
+                webpage_doc.updated_at = chrono::Utc::now();
+
+                let bson_doc = mongodb::bson::to_bson(&webpage_doc).unwrap();
+                webpages_collection
+                    .update_one(
+                        mongodb::bson::doc! { "_id": website_id },
+                        mongodb::bson::doc! { "$set": bson_doc },
+                        None,
+                    )
+                    .await
+                    .unwrap();
+            }
+            Err(e) => {
+                eprintln!("Error: {}", e);
+            }
+        }
+    }
+
+    Ok(())
+}
+
+pub async fn get_database_webpage_to_scrap(db_client: mongodb::Client) -> Option<DatabaseWebpage> {
     let webpages_collection: mongodb::Collection<DatabaseWebpage> =
         db_client.database("sitemade").collection("webpages");
 
@@ -485,9 +507,7 @@ pub async fn get_database_webpage_to_scrap() -> Option<DatabaseWebpage> {
     return Some(webpage.unwrap());
 }
 
-pub async fn get_webpages_count_from_domain(domain_id: mongodb::bson::oid::ObjectId) -> u64 {
-    let db_client = get_mongodb().await.unwrap();
-
+pub async fn get_webpages_count_from_domain(db_client: mongodb::Client, domain_id: mongodb::bson::oid::ObjectId) -> u64 {
     let webpages_collection: mongodb::Collection<DatabaseWebpage> =
         db_client.database("sitemade").collection("webpages");
 
